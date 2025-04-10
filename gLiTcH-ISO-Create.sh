@@ -36,35 +36,39 @@ create_squashfs() {
     # Create directory structure
     mkdir -p "$iso_dir/live"
     
-    # Create list of directories to exclude
-    local exclude_file="/tmp/squashfs_exclude_$$.txt"
-    cat > "$exclude_file" <<EOF
-/home/$iso_name
-/tmp/*
-/var/tmp/*
-/var/cache/*
-/var/log/*
-/var/lib/apt/lists/*
-/home/*
-/root/.bash_history
-/root/.cache
-/usr/src/*
-/boot/*rescue*
-/boot/*config*
-/boot/System.map*
-/boot/vmlinuz.old
-EOF
+    # Create temporary directory for building squashfs
+    local squashfs_build_dir="/tmp/squashfs_build_$$"
+    mkdir -p "$squashfs_build_dir"
+    
+    # Copy entire system except excluded paths
+    echo "Copying files to temporary directory (this may take a while)..."
+    rsync -a --delete \
+        --exclude="$iso_dir" \
+        --exclude="/tmp/*" \
+        --exclude="/var/tmp/*" \
+        --exclude="/var/cache/*" \
+        --exclude="/var/log/*" \
+        --exclude="/var/lib/apt/lists/*" \
+        --exclude="/home/*" \
+        --exclude="/root/.bash_history" \
+        --exclude="/root/.cache" \
+        --exclude="/usr/src/*" \
+        --exclude="/boot/*rescue*" \
+        --exclude="/boot/*config*" \
+        --exclude="/boot/System.map*" \
+        --exclude="/boot/vmlinuz.old" \
+        / "$squashfs_build_dir"
     
     # Create squashfs with maximum compression
-    sudo mksquashfs / \
+    echo "Compressing filesystem..."
+    sudo mksquashfs "$squashfs_build_dir" \
         "$iso_dir/live/filesystem.squashfs" \
         -comp xz \
         -b 1048576 \
-        -ef "$exclude_file" \
-        -wildcards
+        -noappend
     
     local squashfs_result=$?
-    rm -f "$exclude_file"
+    sudo rm -rf "$squashfs_build_dir"
     
     if [ $squashfs_result -ne 0 ]; then
         echo "Error creating squashfs filesystem"
