@@ -38,7 +38,7 @@ download_bootfiles() {
     tar -xzf "$temp_dir/BOOTFILES.tar.gz" -C "$temp_dir"
     cp -r "$temp_dir"/* "$iso_dir/"
     rm -rf "$temp_dir"
-    rm "$iso_dir/BOOTFILES.tar.gz"
+    rm -f "$iso_dir/BOOTFILES.tar.gz"
     
     echo "Bootfiles installed successfully"
 }
