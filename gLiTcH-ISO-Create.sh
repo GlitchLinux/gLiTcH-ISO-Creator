@@ -258,30 +258,27 @@ generate_boot_configs() {
     cat > "$ISO_DIR/boot/grub/grub.cfg" <<EOF
 # GRUB.CFG 
 
-set default="0"
-set timeout=10
+if loadfont $prefix/font.pf2 ; then
+  set gfxmode=800x600
+  set gfxpayload=keep
+  insmod efi_gop
+  insmod efi_uga
+  insmod video_bochs
+  insmod video_cirrus
+  insmod gfxterm
+  insmod png
+  terminal_output gfxterm
+fi
 
-search --set=root --file /live/vmlinuz
-
-function load_video {
-    insmod vbe
-    insmod vga
-    insmod video_bochs
-    insmod video_cirrus
-}
-
-loadfont /usr/share/grub/unicode.pf2
-
-set gfxmode=640x480
-load_video
-insmod gfxterm
-set locale_dir=/boot/grub/locale
-set lang=C
-insmod gettext
-if [ -f /boot/grub/splash.png ]; then
-    background_image -m stretch /boot/grub/splash.png
-    terminal_output gfxterm
-    insmod png
+if background_image /boot/grub/splash.png; then
+  set color_normal=light-gray/black
+  set color_highlight=white/black
+elif background_image /splash.png; then
+  set color_normal=light-gray/black
+  set color_highlight=white/black
+else
+  set menu_color_normal=cyan/blue
+  set menu_color_highlight=white/blue
 fi
 
 menuentry "$NAME - LIVE" {
