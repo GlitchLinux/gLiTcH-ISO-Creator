@@ -36,29 +36,37 @@ create_squashfs() {
     # Create directory structure
     mkdir -p "$iso_dir/live"
     
+    # Create list of directories to exclude
+    local exclude_file="/tmp/squashfs_exclude_$$.txt"
+    cat > "$exclude_file" <<EOF
+/home/$iso_name
+/tmp/*
+/var/tmp/*
+/var/cache/*
+/var/log/*
+/var/lib/apt/lists/*
+/home/*
+/root/.bash_history
+/root/.cache
+/usr/src/*
+/boot/*rescue*
+/boot/*config*
+/boot/System.map*
+/boot/vmlinuz.old
+EOF
+    
     # Create squashfs with maximum compression
     sudo mksquashfs / \
         "$iso_dir/live/filesystem.squashfs" \
         -comp xz \
         -b 1048576 \
-        -wildcards \
-        -e \
-        "$iso_dir" \
-        /tmp/* \
-        /var/tmp/* \
-        /var/cache/* \
-        /var/log/* \
-        /var/lib/apt/lists/* \
-        /home/* \
-        /root/.bash_history \
-        /root/.cache \
-        /usr/src/* \
-        /boot/*rescue* \
-        /boot/*config* \
-        /boot/System.map* \
-        /boot/vmlinuz.old
+        -ef "$exclude_file" \
+        -wildcards
     
-    if [ $? -ne 0 ]; then
+    local squashfs_result=$?
+    rm -f "$exclude_file"
+    
+    if [ $squashfs_result -ne 0 ]; then
         echo "Error creating squashfs filesystem"
         exit 1
     fi
