@@ -7,17 +7,97 @@
 install_dependencies() {
     echo "Installing required packages..."
     if [ -x "$(command -v apt-get)" ]; then
-        sudo apt-get install -y xorriso isolinux syslinux-utils mtools wget
+        sudo apt-get install -y xorriso isolinux syslinux-utils mtools wget squashfs-tools
     elif [ -x "$(command -v dnf)" ]; then
-        sudo dnf install -y xorriso syslinux mtools wget
+        sudo dnf install -y xorriso syslinux mtools wget squashfs-tools
     elif [ -x "$(command -v yum)" ]; then
-        sudo yum install -y xorriso syslinux mtools wget
+        sudo yum install -y xorriso syslinux mtools wget squashfs-tools
     elif [ -x "$(command -v pacman)" ]; then
-        sudo pacman -S --noconfirm xorriso syslinux mtools wget
+        sudo pacman -S --noconfirm xorriso syslinux mtools wget squashfs-tools
     else
         echo "ERROR: Could not detect package manager to install dependencies."
         exit 1
     fi
+}
+
+# Create squashfs filesystem
+create_squashfs() {
+    local iso_name="$1"
+    local iso_dir="/home/$iso_name"
+    
+    echo "Creating filesystem.squashfs..."
+    
+    # Remove previous directory if exists
+    if [ -d "$iso_dir" ]; then
+        echo "Removing previous $iso_dir..."
+        sudo rm -rf "$iso_dir"
+    fi
+    
+    # Create directory structure
+    mkdir -p "$iso_dir/live"
+    
+    # Create squashfs with maximum compression
+    sudo mksquashfs / \
+        "$iso_dir/live/filesystem.squashfs" \
+        -comp xz \
+        -b 1048576 \
+        -wildcards \
+        -e \
+        "$iso_dir" \
+        /tmp/* \
+        /var/tmp/* \
+        /var/cache/* \
+        /var/log/* \
+        /var/lib/apt/lists/* \
+        /home/* \
+        /root/.bash_history \
+        /root/.cache \
+        /usr/src/* \
+        /boot/*rescue* \
+        /boot/*config* \
+        /boot/System.map* \
+        /boot/vmlinuz.old
+    
+    if [ $? -ne 0 ]; then
+        echo "Error creating squashfs filesystem"
+        exit 1
+    fi
+    
+    echo "filesystem.squashfs created successfully at $iso_dir/live/"
+}
+
+# Copy kernel and initrd files
+copy_kernel_initrd() {
+    local iso_name="$1"
+    local iso_dir="/home/$iso_name"
+    
+    echo "Copying kernel and initrd files..."
+    
+    # Find and copy vmlinuz
+    vmlinuz_file=$(find /boot -name 'vmlinuz-*' -not -name '*-rescue-*' | sort -V | tail -n 1)
+    if [ -z "$vmlinuz_file" ]; then
+        echo "Error: Could not find vmlinuz file in /boot"
+        exit 1
+    fi
+    
+    cp "$vmlinuz_file" "$iso_dir/live/vmlinuz"
+    
+    # Find and copy initrd
+    initrd_file=$(find /boot -name 'initrd.img-*' -not -name '*-rescue-*' | sort -V | tail -n 1)
+    if [ -z "$initrd_file" ]; then
+        # Try initramfs if initrd not found
+        initrd_file=$(find /boot -name 'initramfs-*' -not -name '*-rescue-*' | sort -V | tail -n 1)
+        if [ -z "$initrd_file" ]; then
+            echo "Error: Could not find initrd/initramfs file in /boot"
+            exit 1
+        fi
+    fi
+    
+    cp "$initrd_file" "$iso_dir/live/initrd.img"
+    
+    echo "Kernel and initrd files copied successfully:"
+    echo " - $iso_dir/live/vmlinuz"
+    echo " - $iso_dir/live/initrd.img"
 }
 
 # Download and extract bootfiles
@@ -189,102 +269,55 @@ main() {
     echo "=== ISO Creation Script ==="
     
     # Check and install dependencies
-    if ! command -v xorriso &>/dev/null || ! command -v mkfs.vfat &>/dev/null || ! command -v wget &>/dev/null; then
+    if ! command -v xorriso &>/dev/null || ! command -v mkfs.vfat &>/dev/null || ! command -v wget &>/dev/null || ! command -v mksquashfs &>/dev/null; then
         install_dependencies
     fi
     
-    # Get source directory
-    read -p "Enter the directory path to make bootable: " ISO_DIR
-    ISO_DIR=$(realpath "$ISO_DIR")
+    # Get ISO name
+    read -p "Enter the name for your ISO (this will be used for directory and ISO name): " iso_name
     
-    # Verify the directory exists
-    if [ ! -d "$ISO_DIR" ]; then
-        echo "Error: Directory $ISO_DIR does not exist."
-        exit 1
-    fi
+    # Create squashfs and copy kernel files
+    create_squashfs "$iso_name"
+    copy_kernel_initrd "$iso_name"
     
-    # Check if the live directory exists
-    if [ ! -d "$ISO_DIR/live" ]; then
-        echo "Error: $ISO_DIR/live directory not found. This doesn't appear to be a live system directory."
-        exit 1
-    fi
+    # Set ISO directory
+    ISO_DIR="/home/$iso_name"
+    cd "$ISO_DIR" || exit 1
     
     # Download bootfiles
     download_bootfiles "$ISO_DIR"
     
-    # Scan for kernel and initrd files
-    VMLINUZ=""
-    INITRD=""
-    SQUASHFS=""
-    
-    # Look for vmlinuz file
-    for file in "$ISO_DIR/live"/vmlinuz*; do
-        if [ -f "$file" ]; then
-            VMLINUZ=$(basename "$file")
-            break
-        fi
-    done
-    
-    # Look for initrd file
-    for file in "$ISO_DIR/live"/initrd*; do
-        if [ -f "$file" ]; then
-            INITRD=$(basename "$file")
-            break
-        fi
-    done
-    
-    # Look for filesystem.squashfs
-    for file in "$ISO_DIR/live"/*.squashfs; do
-        if [ -f "$file" ]; then
-            SQUASHFS=$(basename "$file")
-            break
-        fi
-    done
+    # Set detected files
+    VMLINUZ="vmlinuz"
+    INITRD="initrd.img"
+    SQUASHFS="filesystem.squashfs"
     
     # Verify we found the necessary files
-    if [ -z "$VMLINUZ" ]; then
+    if [ ! -f "$ISO_DIR/live/$VMLINUZ" ]; then
         echo "Error: Could not find vmlinuz file in $ISO_DIR/live/"
         exit 1
     fi
     
-    if [ -z "$INITRD" ]; then
+    if [ ! -f "$ISO_DIR/live/$INITRD" ]; then
         echo "Error: Could not find initrd file in $ISO_DIR/live/"
         exit 1
     fi
     
-    if [ -z "$SQUASHFS" ]; then
+    if [ ! -f "$ISO_DIR/live/$SQUASHFS" ]; then
         echo "Warning: Could not find squashfs file in $ISO_DIR/live/"
     fi
     
-    # Ask for system name
-    read -p "Enter the name of the system in the ISO: " NAME
-    
-    # Confirm detected files or allow user to override
-    echo "Detected files:"
-    echo "vmlinuz: $VMLINUZ"
-    echo "initrd: $INITRD"
-    echo "squashfs: $SQUASHFS"
-    read -p "Press enter to accept these or enter new values (vmlinuz initrd): " -r OVERRIDE
-    
-    if [ ! -z "$OVERRIDE" ]; then
-        read -ra OVERRIDE_ARRAY <<< "$OVERRIDE"
-        VMLINUZ=${OVERRIDE_ARRAY[0]:-$VMLINUZ}
-        INITRD=${OVERRIDE_ARRAY[1]:-$INITRD}
-    fi
+    # Use ISO name as system name
+    NAME="$iso_name"
     
     # Generate boot configurations
     generate_boot_configs "$ISO_DIR" "$NAME" "$VMLINUZ" "$INITRD" "$SQUASHFS"
     
-    # Get output filename
-    read -p "Enter the output ISO filename (e.g., MyDistro.iso): " iso_name
+    # Set output filename (same as directory name)
+    output_file="/home/${iso_name}.iso"
     
-    # Set output directory to parent of ISO_DIR
-    output_dir=$(dirname "$ISO_DIR")
-    output_file="$output_dir/$iso_name"
-    
-    # Get volume label
-    read -p "Enter ISO volume label (max 32 chars, no spaces/special chars): " iso_label
-    iso_label=$(echo "$iso_label" | tr '[:lower:]' '[:upper:]' | tr -cd '[:alnum:]_-')
+    # Set volume label (same as directory name, sanitized)
+    iso_label=$(echo "$iso_name" | tr '[:lower:]' '[:upper:]' | tr -cd '[:alnum:]_-')
     iso_label=${iso_label:0:32}
     
     # Confirm and create ISO
