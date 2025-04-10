@@ -20,7 +20,7 @@ install_dependencies() {
     fi
 }
 
-# Create squashfs filesystem
+# Create squashfs filesystem directly without using rsync and temp directory
 create_squashfs() {
     local iso_name="$1"
     local iso_dir="/home/$iso_name"
@@ -36,39 +36,36 @@ create_squashfs() {
     # Create directory structure
     mkdir -p "$iso_dir/live"
     
-    # Create temporary directory for building squashfs
-    local squashfs_build_dir="/tmp/squashfs_build_$$"
-    mkdir -p "$squashfs_build_dir"
-    
-    # Copy entire system except excluded paths
-    echo "Copying files to temporary directory (this may take a while)..."
-    rsync -a --delete \
-        --exclude="$iso_dir" \
-        --exclude="/tmp/*" \
-        --exclude="/var/tmp/*" \
-        --exclude="/var/cache/*" \
-        --exclude="/var/log/*" \
-        --exclude="/var/lib/apt/lists/*" \
-        --exclude="/home/*" \
-        --exclude="/root/.bash_history" \
-        --exclude="/root/.cache" \
-        --exclude="/usr/src/*" \
-        --exclude="/boot/*rescue*" \
-        --exclude="/boot/*config*" \
-        --exclude="/boot/System.map*" \
-        --exclude="/boot/vmlinuz.old" \
-        / "$squashfs_build_dir"
-    
-    # Create squashfs with maximum compression
-    echo "Compressing filesystem..."
-    sudo mksquashfs "$squashfs_build_dir" \
+    # Create squashfs directly from root filesystem with exclusions
+    echo "Creating filesystem.squashfs directly (this may take a while)..."
+    sudo mksquashfs \
+        / \
         "$iso_dir/live/filesystem.squashfs" \
         -comp xz \
         -b 1048576 \
-        -noappend
+        -noappend \
+        -e "$iso_dir" \
+        -e /tmp \
+        -e /var/tmp \
+        -e /var/cache \
+        -e /var/log \
+        -e /var/lib/apt/lists \
+        -e /home \
+        -e /root/.bash_history \
+        -e /root/.cache \
+        -e /usr/src \
+        -e /boot/*rescue* \
+        -e /boot/*config* \
+        -e /boot/System.map* \
+        -e /boot/vmlinuz.old \
+        -e /proc \
+        -e /sys \
+        -e /dev \
+        -e /run \
+        -e /media \
+        -e /mnt
     
     local squashfs_result=$?
-    sudo rm -rf "$squashfs_build_dir"
     
     if [ $squashfs_result -ne 0 ]; then
         echo "Error creating squashfs filesystem"
