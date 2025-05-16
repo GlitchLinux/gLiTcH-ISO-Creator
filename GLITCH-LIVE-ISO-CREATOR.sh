@@ -41,7 +41,6 @@ download_bootfiles() {
     rm -f "$iso_dir/BOOTFILES.tar.gz"
     
     # Ensure required UEFI directories exist
-    mkdir -p "$iso_dir/EFI/BOOT"
     mkdir -p "$iso_dir/BOOT"
     
     echo "Bootfiles installed successfully"
