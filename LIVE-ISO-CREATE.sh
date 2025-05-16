@@ -7,13 +7,13 @@
 install_dependencies() {
     echo "Installing required packages..."
     if [ -x "$(command -v apt-get)" ]; then
-        sudo apt-get install -y xorriso isolinux syslinux-utils mtools wget
+        sudo apt-get install -y xorriso isolinux syslinux-utils mtools wget grub-efi-amd64-bin grub-pc-bin
     elif [ -x "$(command -v dnf)" ]; then
-        sudo dnf install -y xorriso syslinux mtools wget
+        sudo dnf install -y xorriso syslinux mtools wget grub2-efi-x64 grub2-pc
     elif [ -x "$(command -v yum)" ]; then
-        sudo yum install -y xorriso syslinux mtools wget
+        sudo yum install -y xorriso syslinux mtools wget grub2-efi-x64 grub2-pc
     elif [ -x "$(command -v pacman)" ]; then
-        sudo pacman -S --noconfirm xorriso syslinux mtools wget
+        sudo pacman -S --noconfirm xorriso syslinux mtools wget grub
     else
         echo "ERROR: Could not detect package manager to install dependencies."
         exit 1
@@ -36,19 +36,8 @@ download_bootfiles() {
     
     echo "Extracting bootfiles to $iso_dir..."
     tar -xzf "$temp_dir/BOOTFILES.tar.gz" -C "$temp_dir"
-    
-    # Copy files preserving directory structure
-    cp -r "$temp_dir"/EFI "$iso_dir"/
-    cp -r "$temp_dir"/boot "$iso_dir"/
-    cp -r "$temp_dir"/isolinux "$iso_dir"/
-    
-    # Clean up
+    cp -r "$temp_dir"/* "$iso_dir/"
     rm -rf "$temp_dir"
-    
-    # Ensure proper case for EFI files
-    if [ -f "$iso_dir/EFI/boot/BOOTx64.EFI" ]; then
-        cp "$iso_dir/EFI/boot/BOOTx64.EFI" "$iso_dir/EFI/boot/bootx64.efi"
-    fi
     
     echo "Bootfiles installed successfully"
 }
@@ -59,23 +48,42 @@ create_iso() {
     local output_file="$2"
     local iso_label="$3"
     
-    echo "Preparing EFI boot image..."
+    echo "Creating hybrid ISO image..."
+    
+    # Ensure required directories exist
+    mkdir -p "$source_dir/EFI/boot"
+    mkdir -p "$source_dir/boot/grub"
+    
+    # Create EFI boot image (if not already present)
     if [ ! -f "$source_dir/EFI/boot/efi.img" ]; then
-        mkdir -p "$source_dir/EFI/boot"
-        dd if=/dev/zero of="$source_dir/EFI/boot/efi.img" bs=1M count=10
+        echo "Creating EFI boot image..."
+        dd if=/dev/zero of="$source_dir/EFI/boot/efi.img" bs=1M count=32
         mkfs.vfat "$source_dir/EFI/boot/efi.img"
-        mmd -i "$source_dir/EFI/boot/efi.img" ::/EFI ::/EFI/BOOT
         
-        # Copy EFI files if they exist
+        # Mount and populate the EFI image
+        local efi_mount="/tmp/efi_mount_$$"
+        mkdir -p "$efi_mount"
+        sudo mount -o loop "$source_dir/EFI/boot/efi.img" "$efi_mount"
+        sudo mkdir -p "$efi_mount/EFI/BOOT"
+        
+        # Copy EFI bootloaders
         if [ -f "$source_dir/EFI/boot/bootx64.efi" ]; then
-            mcopy -i "$source_dir/EFI/boot/efi.img" "$source_dir/EFI/boot/bootx64.efi" ::/EFI/BOOT/
+            sudo cp "$source_dir/EFI/boot/bootx64.efi" "$efi_mount/EFI/BOOT/"
+        elif [ -f "$source_dir/EFI/boot/grubx64.efi" ]; then
+            sudo cp "$source_dir/EFI/boot/grubx64.efi" "$efi_mount/EFI/BOOT/bootx64.efi"
         fi
-        if [ -f "$source_dir/EFI/boot/grubx64.efi" ]; then
-            mcopy -i "$source_dir/EFI/boot/efi.img" "$source_dir/EFI/boot/grubx64.efi" ::/EFI/BOOT/
+        
+        # Copy grub.cfg to EFI partition
+        if [ -f "$source_dir/boot/grub/grub.cfg" ]; then
+            sudo mkdir -p "$efi_mount/boot/grub"
+            sudo cp "$source_dir/boot/grub/grub.cfg" "$efi_mount/boot/grub/"
         fi
+        
+        sudo umount "$efi_mount"
+        rm -rf "$efi_mount"
     fi
 
-    echo "Creating hybrid ISO image..."
+    # Create ISO with both BIOS and UEFI support
     xorriso -as mkisofs \
         -iso-level 3 \
         -full-iso9660-filenames \
@@ -93,7 +101,19 @@ create_iso() {
         -output "$output_file" \
         "$source_dir"
 
-    echo "ISO created successfully at: $output_file"
+    # Check if ISO was created successfully
+    if [ $? -eq 0 ]; then
+        echo "ISO created successfully at: $output_file"
+        
+        # Make the ISO bootable from USB
+        isohybrid --uefi "$output_file"
+        
+        # Add checksum for verification
+        implantisomd5 "$output_file"
+    else
+        echo "Error: Failed to create ISO"
+        exit 1
+    fi
 }
 
 # Generate boot configurations
@@ -109,47 +129,40 @@ generate_boot_configs() {
 
     # Generate grub.cfg
     cat > "$ISO_DIR/boot/grub/grub.cfg" <<EOF
-# GRUB.CFG 
+set timeout=10
+set default=0
 
-if loadfont \$prefix/font.pf2 ; then
-  set gfxmode=800x600
-  set gfxpayload=keep
+if loadfont /boot/grub/font.pf2 ; then
+  set gfxmode=auto
   insmod efi_gop
   insmod efi_uga
-  insmod video_bochs
-  insmod video_cirrus
   insmod gfxterm
-  insmod png
   terminal_output gfxterm
 fi
 
-if background_image /boot/grub/splash.png; then
-  set color_normal=light-gray/black
-  set color_highlight=white/black
-elif background_image /splash.png; then
-  set color_normal=light-gray/black
-  set color_highlight=white/black
-else
-  set menu_color_normal=cyan/blue
-  set menu_color_highlight=white/blue
-fi
+set menu_color_normal=white/black
+set menu_color_highlight=black/light-gray
 
 menuentry "$NAME - LIVE" {
+    search --set=root --file /live/$VMLINUZ
     linux /live/$VMLINUZ boot=live config quiet
     initrd /live/$INITRD
 }
 
 menuentry "$NAME - Boot ISO to RAM" {
+    search --set=root --file /live/$VMLINUZ
     linux /live/$VMLINUZ boot=live config quiet toram
     initrd /live/$INITRD
 }
 
 menuentry "$NAME - Encrypted Persistence" {
+    search --set=root --file /live/$VMLINUZ
     linux /live/$VMLINUZ boot=live components quiet splash noeject findiso=\${iso_path} persistent=cryptsetup persistence-encryption=luks persistence
     initrd /live/$INITRD
 }
 
 menuentry "GRUBFM - (UEFI)" {
+    search --set=root --file /EFI/GRUB-FM/E2B-bootx64.efi
     chainloader /EFI/GRUB-FM/E2B-bootx64.efi
 }
 EOF
@@ -196,28 +209,39 @@ EOF
 verify_boot_files() {
     local ISO_DIR="$1"
     
-    echo -e "\nVerifying boot files exist:"
-    required_files=(
-        "$ISO_DIR/isolinux/isolinux.bin"
-        "$ISO_DIR/isolinux/isohdpfx.bin"
-        "$ISO_DIR/EFI/boot/bootx64.efi"
-        "$ISO_DIR/boot/grub/grub.cfg"
-    )
-
-    missing_files=0
-    for file in "${required_files[@]}"; do
-        if [ -f "$file" ]; then
-            echo "- $file [✔]"
-        else
-            echo "- $file [MISSING]"
-            missing_files=1
-        fi
-    done
-
-    if [ "$missing_files" = 1 ]; then
-        echo "Error: Required boot files are missing!"
+    echo "Verifying required boot files..."
+    
+    # Check BIOS boot files
+    if [ ! -f "$ISO_DIR/isolinux/isolinux.bin" ]; then
+        echo "Error: Missing isolinux.bin - BIOS bootloader not found"
         exit 1
     fi
+    
+    if [ ! -f "$ISO_DIR/isolinux/isohdpfx.bin" ]; then
+        echo "Error: Missing isohdpfx.bin - BIOS hybrid MBR not found"
+        exit 1
+    fi
+    
+    # Check UEFI boot files
+    if [ ! -f "$ISO_DIR/EFI/boot/bootx64.efi" ] && [ ! -f "$ISO_DIR/EFI/boot/grubx64.efi" ]; then
+        echo "Warning: Missing UEFI bootloader (bootx64.efi or grubx64.efi)"
+        echo "Attempting to generate one..."
+        
+        # Try to generate GRUB EFI bootloader
+        if command -v grub-mkstandalone &>/dev/null; then
+            grub-mkstandalone \
+                --format=x86_64-efi \
+                --output="$ISO_DIR/EFI/boot/bootx64.efi" \
+                --locales="" \
+                --fonts="" \
+                "boot/grub/grub.cfg=$ISO_DIR/boot/grub/grub.cfg"
+        else
+            echo "Error: grub-mkstandalone not found - cannot create UEFI bootloader"
+            exit 1
+        fi
+    fi
+    
+    echo "Boot files verified successfully"
 }
 
 # Main script
@@ -311,6 +335,9 @@ main() {
     # Generate boot configurations
     generate_boot_configs "$ISO_DIR" "$NAME" "$VMLINUZ" "$INITRD" "$SQUASHFS"
     
+    # Verify boot files
+    verify_boot_files "$ISO_DIR"
+    
     # Get output filename
     read -p "Enter the output ISO filename (e.g., MyDistro.iso): " iso_name
     
@@ -323,14 +350,15 @@ main() {
     iso_label=$(echo "$iso_label" | tr '[:lower:]' '[:upper:]' | tr -cd '[:alnum:]_-')
     iso_label=${iso_label:0:32}
     
-    # Verify boot files before creating ISO
-    verify_boot_files "$ISO_DIR"
-    
     # Confirm and create ISO
     echo -e "\n=== Summary ==="
     echo "Source Directory: $ISO_DIR"
     echo "Output ISO: $output_file"
     echo "Volume Label: $iso_label"
+    echo -e "\nRequired files verified:"
+    echo "- $ISO_DIR/isolinux/isolinux.bin [✔]"
+    echo "- $ISO_DIR/isolinux/isohdpfx.bin [✔]"
+    echo "- $ISO_DIR/EFI/boot/bootx64.efi or grubx64.efi [✔]"
     
     read -p "Proceed with ISO creation? (y/n): " confirm
     if [[ "$confirm" =~ ^[Yy]$ ]]; then
