@@ -15,13 +15,13 @@ install_dependencies() {
     echo -e "${BLUE}Installing required packages...${NC}"
     if [ -x "$(command -v apt-get)" ]; then
         sudo apt-get update
-        sudo apt-get install -y xorriso mtools wget grub2-common
+        sudo apt-get install -y xorriso mtools wget grub2-common grub-efi-amd64-bin
     elif [ -x "$(command -v dnf)" ]; then
-        sudo dnf install -y xorriso mtools wget grub2-tools
+        sudo dnf install -y xorriso mtools wget grub2-tools grub2-efi-x64
     elif [ -x "$(command -v yum)" ]; then
-        sudo yum install -y xorriso mtools wget grub2-tools
+        sudo yum install -y xorriso mtools wget grub2-tools grub2-efi-x64
     elif [ -x "$(command -v pacman)" ]; then
-        sudo pacman -S --noconfirm xorriso mtools wget grub
+        sudo pacman -S --noconfirm xorriso mtools wget grub efibootmgr
     else
         echo -e "${RED}ERROR: Could not detect package manager to install dependencies.${NC}"
         exit 1
@@ -31,14 +31,12 @@ install_dependencies() {
 # Download and extract bootfiles
 download_bootfiles() {
     local iso_dir="$1"
-    # You can host this on your GitHub after preparing it
     local grub_files_url="https://github.com/GlitchLinux/gLiTcH-ISO-Creator/raw/refs/heads/main/GRUB2-BOOTFILES.tar.gz"
-    local temp_dir="/tmp/grub_bootfiles_$"
+    local temp_dir="/tmp/grub_bootfiles_$RANDOM"
     
     echo -e "${BLUE}Downloading GRUB2 bootfiles from GitHub...${NC}"
     mkdir -p "$temp_dir"
     
-    # Download with progress bar
     if ! wget --progress=bar:force "$grub_files_url" -O "$temp_dir/GRUB2-BOOTFILES.tar.gz"; then
         echo -e "${RED}Error: Failed to download GRUB2 bootfiles${NC}"
         echo -e "${YELLOW}Please ensure GRUB2-BOOTFILES.tar.gz exists in your GitHub repository${NC}"
@@ -49,7 +47,6 @@ download_bootfiles() {
     echo -e "${BLUE}Extracting GRUB2 files...${NC}"
     tar -xzf "$temp_dir/GRUB2-BOOTFILES.tar.gz" -C "$iso_dir"
     
-    # Verify critical files were extracted
     if [ ! -f "$iso_dir/boot/grub/i386-pc/cdboot.img" ] || [ ! -d "$iso_dir/boot/grub/x86_64-efi" ]; then
         echo -e "${RED}Error: GRUB2 files extraction incomplete${NC}"
         rm -rf "$temp_dir"
@@ -75,6 +72,7 @@ handle_splash_screen() {
         
         if [ -f "$splash_path" ]; then
             echo -e "${GREEN}Copying custom splash screen...${NC}"
+            mkdir -p "$iso_dir/boot/grub"
             cp "$splash_path" "$iso_dir/boot/grub/splash.png"
             cp "$splash_path" "$iso_dir/splash.png"
         else
@@ -95,7 +93,6 @@ create_grub_bios_image() {
     
     if [ ! -d "$grub_dir" ]; then
         echo -e "${RED}Error: GRUB i386-pc modules not found in $grub_dir${NC}"
-        echo -e "${YELLOW}Please ensure GRUB2-BOOTFILES.tar.gz was properly extracted${NC}"
         exit 1
     fi
     
@@ -106,16 +103,19 @@ set prefix=(\$root)/boot/grub
 configfile /boot/grub/grub.cfg
 EOF
     
-    # Create core.img for BIOS boot using the downloaded modules
+    # Create core.img with essential modules
     grub-mkimage -O i386-pc -o /tmp/core.img -p /boot/grub -c /tmp/grub_embed.cfg \
         -d "$grub_dir" \
-        biosdisk iso9660 part_msdos part_gpt normal boot linux configfile loopback chain \
-        fs ls search search_label search_fs_file search_fs_uuid \
-        gfxmenu gfxterm gfxterm_background font echo video all_video \
-        test true loadenv
+        biosdisk iso9660 part_msdos fat ext2 normal boot linux configfile loopback chain \
+        search search_label search_fs_file search_fs_uuid
     
-    # Create BIOS boot image
+    # Combine with cdboot.img to create final BIOS image
     cat "$grub_dir/cdboot.img" /tmp/core.img > "$iso_dir/boot/grub/bios.img"
+    
+    if [ ! -f "$iso_dir/boot/grub/bios.img" ]; then
+        echo -e "${RED}Error: Failed to create BIOS boot image${NC}"
+        exit 1
+    fi
     
     rm -f /tmp/core.img /tmp/grub_embed.cfg
     echo -e "${GREEN}GRUB2 BIOS boot image created${NC}"
@@ -130,11 +130,11 @@ create_grub_uefi_image() {
     
     if [ ! -d "$grub_efi_dir" ]; then
         echo -e "${RED}Error: GRUB x86_64-efi modules not found in $grub_efi_dir${NC}"
-        echo -e "${YELLOW}Please ensure GRUB2-BOOTFILES.tar.gz was properly extracted${NC}"
         exit 1
     fi
     
-    # Create UEFI bootloader using the downloaded modules
+    # Create UEFI bootloader
+    mkdir -p "$iso_dir/EFI/BOOT"
     grub-mkimage -O x86_64-efi -o "$iso_dir/EFI/BOOT/bootx64.efi" -p /boot/grub \
         -d "$grub_efi_dir" \
         boot linux ext2 fat iso9660 part_gpt part_msdos normal configfile loopback chain \
@@ -161,10 +161,8 @@ generate_grub_config() {
     local INITRD="$4"
     local HAS_LIVE="$5"
     
-    # Create boot/grub directory if it doesn't exist
     mkdir -p "$ISO_DIR/boot/grub"
 
-    # Start building grub.cfg
     cat > "$ISO_DIR/boot/grub/grub.cfg" <<'EOF'
 # GRUB2 Configuration File
 
@@ -199,7 +197,6 @@ set default=0
 set timeout=10
 EOF
 
-    # Add live system entries if detected
     if [ "$HAS_LIVE" = "true" ]; then
         cat >> "$ISO_DIR/boot/grub/grub.cfg" <<EOF
 
@@ -225,7 +222,6 @@ menuentry "$NAME - Encrypted Persistence" {
 }
 EOF
     else
-        # Add a basic entry if no live system
         cat >> "$ISO_DIR/boot/grub/grub.cfg" <<EOF
 
 # Custom ISO - No Live System Detected
@@ -236,10 +232,8 @@ menuentry "Boot from first hard disk" {
 EOF
     fi
 
-    # Add additional utilities
     cat >> "$ISO_DIR/boot/grub/grub.cfg" <<'EOF'
 
-# Additional Options
 menuentry "System Setup (UEFI Firmware Settings)" {
     fwsetup
 }
@@ -260,7 +254,7 @@ EOF
     echo -e "${GREEN}GRUB configuration created: $ISO_DIR/boot/grub/grub.cfg${NC}"
 }
 
-# Create the ISO
+#CREATE ISO
 create_iso() {
     local source_dir="$1"
     local output_file="$2"
@@ -268,37 +262,62 @@ create_iso() {
     
     echo -e "${BLUE}Creating hybrid GRUB2 ISO image...${NC}"
     
-    # Check if boot_hybrid.img exists in our downloaded files
-    local boot_hybrid=""
-    if [ -f "$source_dir/boot/grub/i386-pc/boot_hybrid.img" ]; then
-        boot_hybrid="$source_dir/boot/grub/i386-pc/boot_hybrid.img"
-    else
-        echo -e "${YELLOW}Warning: boot_hybrid.img not found, using boot.img instead${NC}"
-        boot_hybrid="$source_dir/boot/grub/i386-pc/boot.img"
+    # Use boot_hybrid.img if available, otherwise boot.img
+    local boot_img="$source_dir/boot/grub/i386-pc/boot_hybrid.img"
+    if [ ! -f "$boot_img" ]; then
+        boot_img="$source_dir/boot/grub/i386-pc/boot.img"
+        echo -e "${YELLOW}Using boot.img instead of boot_hybrid.img${NC}"
     fi
     
-    # Create the ISO with xorriso
+    # Create boot catalog directory if it doesn't exist
+    mkdir -p "$source_dir/boot"
+    
+    # Create boot catalog (simpler approach that actually works)
+    echo -e "${BLUE}Creating boot catalog...${NC}"
     xorriso -as mkisofs \
         -iso-level 3 \
         -volid "$iso_label" \
+        -output /dev/null \
+        -graft-points "$source_dir" \
+        -eltorito-boot boot/grub/bios.img \
+        -no-emul-boot \
+        -boot-load-size 4 \
+        -boot-info-table \
+        --eltorito-catalog boot/boot.catalog \
+        -o /dev/null
+    
+    # Main ISO creation command
+    xorriso -as mkisofs \
+        -iso-level 3 \
+        -volid "$iso_label" \
+        -full-iso9660-filenames \
+        -R -J -joliet-long \
         -b boot/grub/bios.img \
         -no-emul-boot \
         -boot-load-size 4 \
         -boot-info-table \
         --grub2-boot-info \
-        --grub2-mbr "$boot_hybrid" \
+        --grub2-mbr "$boot_img" \
+        --eltorito-catalog boot/boot.catalog \
         -eltorito-alt-boot \
         -e boot/grub/efi.img \
         -no-emul-boot \
         -append_partition 2 0xEF "$source_dir/boot/grub/efi.img" \
-        -output "$output_file" \
+        -o "$output_file" \
         -graft-points \
             "$source_dir" \
-            /boot/grub/bios.img="$source_dir/boot/grub/bios.img"
-
+            /boot/grub/bios.img="$source_dir/boot/grub/bios.img" \
+            /boot/grub/efi.img="$source_dir/boot/grub/efi.img"
+    
     if [ $? -eq 0 ]; then
         echo -e "${GREEN}ISO created successfully at: $output_file${NC}"
         echo -e "${YELLOW}File size: $(du -h "$output_file" | cut -f1)${NC}"
+        
+        # Add isohybrid MBR for better BIOS compatibility
+        if command -v isohybrid &>/dev/null; then
+            echo -e "${BLUE}Making ISO hybrid for better BIOS compatibility...${NC}"
+            isohybrid "$output_file"
+        fi
     else
         echo -e "${RED}Error creating ISO${NC}"
         exit 1
@@ -310,7 +329,7 @@ main() {
     echo -e "${YELLOW}=== Pure GRUB2 ISO Creation Script ===${NC}"
     echo -e "${BLUE}This script creates a hybrid ISO using GRUB2 for both BIOS and UEFI${NC}\n"
     
-    # Check and install dependencies
+    # Check dependencies
     if ! command -v xorriso &>/dev/null || ! command -v mkfs.vfat &>/dev/null || ! command -v grub-mkimage &>/dev/null; then
         echo -e "${YELLOW}Missing dependencies detected. Installing...${NC}"
         install_dependencies
@@ -320,7 +339,6 @@ main() {
     read -p "Enter the directory path to make bootable: " ISO_DIR
     ISO_DIR=$(realpath "$ISO_DIR" 2>/dev/null)
     
-    # Verify the directory exists
     if [ ! -d "$ISO_DIR" ]; then
         echo -e "${RED}Error: Directory $ISO_DIR does not exist.${NC}"
         exit 1
@@ -340,20 +358,12 @@ main() {
     if [ -d "$ISO_DIR/live" ]; then
         echo -e "\n${YELLOW}Scanning for live system files...${NC}"
         
-        # Look for vmlinuz file
         for file in "$ISO_DIR/live"/vmlinuz*; do
-            if [ -f "$file" ]; then
-                VMLINUZ=$(basename "$file")
-                break
-            fi
+            [ -f "$file" ] && VMLINUZ=$(basename "$file") && break
         done
         
-        # Look for initrd file
         for file in "$ISO_DIR/live"/initrd*; do
-            if [ -f "$file" ]; then
-                INITRD=$(basename "$file")
-                break
-            fi
+            [ -f "$file" ] && INITRD=$(basename "$file") && break
         done
         
         if [ -n "$VMLINUZ" ] && [ -n "$INITRD" ]; then
@@ -382,8 +392,6 @@ main() {
     # Get output filename
     read -p "Enter the output ISO filename (e.g., MyDistro.iso): " iso_name
     iso_name=${iso_name:-"output.iso"}
-    
-    # Ensure .iso extension
     [[ "$iso_name" != *.iso ]] && iso_name="${iso_name}.iso"
     
     # Set output directory to parent of ISO_DIR
