@@ -165,6 +165,14 @@ menuentry "$NAME - Encrypted Persistence" {
 menuentry "GRUBFM - (UEFI)" {
     chainloader /EFI/GRUB-FM/E2B-bootx64.efi
 }
+
+menuentry "Power Off" {
+    halt
+}
+
+menuentry "Reboot" {
+    reboot
+}
 EOF
 
     # Create isolinux directory if it doesn't exist
