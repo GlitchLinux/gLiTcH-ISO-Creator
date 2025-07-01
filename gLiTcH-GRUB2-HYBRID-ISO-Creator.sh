@@ -242,25 +242,33 @@ menuentry "Boot from first hard disk" {
     set root=(hd0)
     chainloader +1
 }
-EOF
-    fi
 
-    cat >> "$ISO_DIR/boot/grub/grub.cfg" <<'EOF'
-
-menuentry "System Setup (UEFI Firmware Settings)" {
-    fwsetup
+menuentry "GRUBFM - (UEFI)" {
+    chainloader /EFI/GRUB-FM/E2B-bootx64.efi
 }
 
-menuentry "GRUB Command Line" {
-    commandline
+menuentry "Power Off" {
+    halt
 }
 
 menuentry "Reboot" {
     reboot
 }
+EOF
+    fi
+
+    cat >> "$ISO_DIR/boot/grub/grub.cfg" <<'EOF'
+
+menuentry "GRUBFM - (UEFI)" {
+    chainloader /EFI/GRUB-FM/E2B-bootx64.efi
+}
 
 menuentry "Power Off" {
     halt
+}
+
+menuentry "Reboot" {
+    reboot
 }
 EOF
 
