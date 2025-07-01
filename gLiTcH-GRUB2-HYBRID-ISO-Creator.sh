@@ -220,6 +220,19 @@ menuentry "$NAME - Encrypted Persistence" {
     linux /live/$VMLINUZ boot=live components quiet splash persistent=cryptsetup persistence-encryption=luks persistence
     initrd /live/$INITRD
 }
+
+menuentry "GRUBFM - (UEFI)" {
+    chainloader /EFI/GRUB-FM/E2B-bootx64.efi
+}
+
+menuentry "Power Off" {
+    halt
+}
+
+menuentry "Reboot" {
+    reboot
+}
+
 EOF
     else
         cat >> "$ISO_DIR/boot/grub/grub.cfg" <<EOF
