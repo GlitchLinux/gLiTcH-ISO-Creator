@@ -206,11 +206,6 @@ menuentry "$NAME - LIVE" {
     initrd /live/$INITRD
 }
 
-menuentry "$NAME - LIVE (Safe Graphics)" {
-    linux /live/$VMLINUZ boot=live config nomodeset quiet
-    initrd /live/$INITRD
-}
-
 menuentry "$NAME - Boot to RAM" {
     linux /live/$VMLINUZ boot=live config quiet splash toram
     initrd /live/$INITRD
@@ -238,10 +233,6 @@ EOF
         cat >> "$ISO_DIR/boot/grub/grub.cfg" <<EOF
 
 # Custom ISO - No Live System Detected
-menuentry "Boot from first hard disk" {
-    set root=(hd0)
-    chainloader +1
-}
 
 menuentry "GRUBFM - (UEFI)" {
     chainloader /EFI/GRUB-FM/E2B-bootx64.efi
@@ -259,17 +250,6 @@ EOF
 
     cat >> "$ISO_DIR/boot/grub/grub.cfg" <<'EOF'
 
-menuentry "GRUBFM - (UEFI)" {
-    chainloader /EFI/GRUB-FM/E2B-bootx64.efi
-}
-
-menuentry "Power Off" {
-    halt
-}
-
-menuentry "Reboot" {
-    reboot
-}
 EOF
 
     echo -e "${GREEN}GRUB configuration created: $ISO_DIR/boot/grub/grub.cfg${NC}"
