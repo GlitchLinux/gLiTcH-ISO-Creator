@@ -238,23 +238,8 @@ menuentry "GRUBFM - (UEFI)" {
     chainloader /EFI/GRUB-FM/E2B-bootx64.efi
 }
 
-menuentry "System Guard Dynamic Loader" {
-    # Load required date module
-    insmod datehook
-
-    # Set configuration paths
-    set sg2d_directory="${config_directory}/sgd"
-    export sg2d_directory
-    set afd_directory="${config_directory}"
-    export afd_directory
-
-    # April Fools' Day special (April 1st)
-    if [ "$MONTH" -eq "4" -a "$DAY" -eq "1" ]; then
-        configfile "${afd_directory}/afd2012.cfg"
-    # Normal configuration
-    else
-        configfile "${sg2d_directory}/main.cfg"
-    fi
+menuentry "Load /boot/grub/sgd/main.cfg" {
+    configfile /boot/grub/sgd/main.cfg
 }
 
 menuentry "Netboot.xyz (UEFI)" {
