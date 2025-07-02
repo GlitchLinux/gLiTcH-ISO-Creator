@@ -307,6 +307,190 @@ EOF
     echo -e "${GREEN}ISOLINUX configuration created: $ISO_DIR/isolinux/isolinux.cfg${NC}"
 }
 
+# Scan directory for WIM files and create boot configuration
+scan_and_create_wim_boot() {
+    local iso_dir="$1"
+    local wim_config="$iso_dir/boot/grub/WIM-Boot.cfg"
+    local wim_files_found=0
+    
+    echo -e "${BLUE}Scanning for WIM files to create boot entries...${NC}"
+    
+    # Create the WIM boot configuration file
+    mkdir -p "$iso_dir/boot/grub"
+    cat > "$wim_config" <<'EOF'
+# Auto-generated WIM Boot Configuration
+# This file contains boot entries for discovered WIM files
+
+set timeout=30
+set default=0
+
+# Load modules
+insmod all_video
+insmod gfxterm
+insmod png
+insmod font
+
+# Set graphics mode
+if loadfont $prefix/fonts/unicode.pf2 ; then
+  set gfxmode=auto
+  set gfxpayload=keep
+  terminal_output gfxterm
+fi
+
+# Theme configuration
+if background_image /boot/grub/splash.png; then
+  set color_normal=light-gray/black
+  set color_highlight=white/black
+elif background_image /splash.png; then
+  set color_normal=light-gray/black
+  set color_highlight=white/black
+else
+  set menu_color_normal=cyan/blue
+  set menu_color_highlight=white/blue
+fi
+
+EOF
+
+    # Function to add menu entry for WIM file
+    add_wim_entry() {
+        local wim_path="$1"
+        local display_name="$2"
+        
+        cat >> "$wim_config" <<EOF
+menuentry "$display_name" {
+    echo "Loading $display_name..."
+    echo "WIM file: $wim_path"
+    if [ -f /boot/wimboot ]; then
+        linux /boot/wimboot
+        initrd $wim_path
+    elif [ -f /wimboot ]; then
+        linux /wimboot
+        initrd $wim_path
+    else
+        echo "Error: wimboot not found!"
+        echo "Please ensure wimboot is available in /boot/ or root directory"
+        echo "Press any key to return to menu..."
+        read
+        configfile /boot/grub/grub.cfg
+    fi
+}
+
+EOF
+        ((wim_files_found++))
+    }
+    
+    # Search for WIM files and create menu entries
+    echo -e "${YELLOW}Searching for WIM files in ISO directory...${NC}"
+    
+    # Search for .wim files recursively
+    while IFS= read -r -d '' wim_file; do
+        # Convert absolute path to relative path from ISO root
+        rel_path="${wim_file#$iso_dir}"
+        
+        # Extract directory and filename for intelligent naming
+        wim_dir=$(dirname "$rel_path")
+        filename=$(basename "$wim_file" .wim)
+        
+        # Create intelligent display names based on path and filename
+        case "$rel_path" in
+            */[Hh]irens*/*|*/[Hh]iren*/*|*/HBCD*/*|*/hbcd*/*)
+                if [[ "$filename" == "boot" ]]; then
+                    display_name="Hiren's BootCD PE"
+                else
+                    display_name="Hiren's BootCD - $(echo "$filename" | sed 's/[-_]/ /g' | sed 's/\b\w/\U&/g')"
+                fi
+                ;;
+            */[Ww]indows*/*|*/WIN*/*|*/win*/*)
+                if [[ "$filename" == "boot" ]]; then
+                    display_name="Windows Boot Environment"
+                elif [[ "$filename" =~ [Pp][Ee] ]]; then
+                    display_name="Windows PE"
+                else
+                    display_name="Windows - $(echo "$filename" | sed 's/[-_]/ /g' | sed 's/\b\w/\U&/g')"
+                fi
+                ;;
+            */[Pp][Ee]/*|*/winpe*/*|*/WinPE*/*)
+                if [[ "$filename" == "boot" ]]; then
+                    display_name="Windows PE"
+                else
+                    display_name="Windows PE - $(echo "$filename" | sed 's/[-_]/ /g' | sed 's/\b\w/\U&/g')"
+                fi
+                ;;
+            */[Rr]escue*/*|*/RESCUE*/*)
+                display_name="System Rescue Environment"
+                ;;
+            */[Aa]ntivirus*/*|*/AV*/*|*/av*/*)
+                display_name="Antivirus Rescue Disk"
+                ;;
+            */[Pp]artition*/*|*/[Gg]parted*/*)
+                display_name="Partition Management Tools"
+                ;;
+            */[Cc]lonezilla*/*|*/CLONEZILLA*/*)
+                display_name="Clonezilla Live PE"
+                ;;
+            */[Dd]iagnostic*/*|*/[Tt]est*/*)
+                display_name="Hardware Diagnostic Tools"
+                ;;
+            */[Uu]efi*/*|*/EFI*/*)
+                display_name="UEFI Tools Environment"
+                ;;
+            */[Tt]ools*/*|*/TOOLS*/*)
+                display_name="System Tools - $(echo "$filename" | sed 's/[-_]/ /g' | sed 's/\b\w/\U&/g')"
+                ;;
+            *)
+                # Generic naming based on directory and filename
+                if [[ "$filename" == "boot" ]]; then
+                    # Use directory name for boot.wim files
+                    dir_name=$(basename "$wim_dir")
+                    if [[ "$dir_name" == "." ]] || [[ "$dir_name" == "/" ]]; then
+                        display_name="Windows Boot Environment"
+                    else
+                        display_name="$(echo "$dir_name" | sed 's/[-_]/ /g' | sed 's/\b\w/\U&/g') PE"
+                    fi
+                else
+                    # Use filename for other WIM files
+                    display_name="$(echo "$filename" | sed 's/[-_]/ /g' | sed 's/\b\w/\U&/g')"
+                fi
+                ;;
+        esac
+        
+        echo -e "  Found: ${GREEN}$rel_path${NC} → $display_name"
+        add_wim_entry "$rel_path" "$display_name"
+        
+    done < <(find "$iso_dir" -name "*.wim" -type f -print0 2>/dev/null)
+    
+    # Add return to main menu option
+    cat >> "$wim_config" <<'EOF'
+menuentry "Return to Main Menu" {
+    configfile /boot/grub/grub.cfg
+}
+
+EOF
+    
+    if [ $wim_files_found -eq 0 ]; then
+        echo -e "${YELLOW}No WIM files found to boot${NC}"
+        cat >> "$wim_config" <<'EOF'
+menuentry "No WIM Files Found" {
+    echo "No WIM files were discovered in this ISO."
+    echo "WIM files are Windows Imaging Format files that can be booted"
+    echo "using wimboot. Please ensure:"
+    echo "1. WIM files are present in the ISO"
+    echo "2. wimboot binary is available in /boot/ directory"
+    echo ""
+    echo "Press any key to return to main menu..."
+    read
+    configfile /boot/grub/grub.cfg
+}
+
+EOF
+    else
+        echo -e "${GREEN}Created boot entries for $wim_files_found WIM files${NC}"
+        echo -e "${YELLOW}Note: WIM booting requires wimboot binary in /boot/ directory${NC}"
+    fi
+    
+    echo -e "${GREEN}WIM Boot configuration saved: $wim_config${NC}"
+}
+
 # Scan directory for EFI files and create chainloader configuration
 scan_and_create_efi_chainloader() {
     local iso_dir="$1"
@@ -373,8 +557,8 @@ EOF
         # Convert absolute path to relative path from ISO root
         rel_path="${efi_file#$iso_dir}"
         
-        # Skip if it's our own bootx64.efi
-        if [[ "$rel_path" == "/EFI/BOOT/bootx64.efi" ]]; then
+        # Skip if it's our own bootx64.efi or GRUB modules
+        if [[ "$rel_path" == "/EFI/BOOT/bootx64.efi" ]] || [[ "$rel_path" == /boot/grub/x86_64-efi/* ]]; then
             continue
         fi
         
@@ -526,6 +710,10 @@ menuentry "EFI Chainloader Menu" {
     configfile /boot/grub/EFI-Chainloader.cfg
 }
 
+menuentry "WIM Boot Menu" {
+    configfile /boot/grub/WIM-Boot.cfg
+}
+
 menuentry "Power Off" {
     halt
 }
@@ -554,6 +742,10 @@ menuentry "Netboot.xyz (UEFI)" {
 
 menuentry "EFI Chainloader Menu" {
     configfile /boot/grub/EFI-Chainloader.cfg
+}
+
+menuentry "WIM Boot Menu" {
+    configfile /boot/grub/WIM-Boot.cfg
 }
 
 menuentry "Power Off" {
@@ -746,6 +938,7 @@ main() {
     echo -e "\n${BLUE}Setting up boot systems...${NC}"
     create_grub_uefi_image "$ISO_DIR"
     scan_and_create_efi_chainloader "$ISO_DIR"
+    scan_and_create_wim_boot "$ISO_DIR"
     generate_isolinux_config "$ISO_DIR" "$NAME" "$VMLINUZ" "$INITRD" "$HAS_LIVE"
     generate_grub_config "$ISO_DIR" "$NAME" "$VMLINUZ" "$INITRD" "$HAS_LIVE"
     
