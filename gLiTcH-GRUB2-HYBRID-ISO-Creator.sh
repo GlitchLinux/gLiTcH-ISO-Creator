@@ -257,6 +257,10 @@ menuentry "System Guard Dynamic Loader" {
     fi
 }
 
+menuentry "Netboot.xyz (UEFI)" {
+    chainloader /boot/grub/netboot.xyz/EFI/BOOT/BOOTX64.EFI
+}
+
 menuentry "Power Off" {
     halt
 }
