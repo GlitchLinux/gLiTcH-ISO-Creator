@@ -44,7 +44,7 @@ download_bootfiles() {
     mkdir -p "$temp_dir"
     
     if ! wget -q --progress=bar:force \
-        "https://github.com/GlitchLinux/gLiTcH-ISO-Creator/raw/refs/heads/main/HYBRID-BASE.tar.lzma" \
+        "https://github.com/GlitchLinux/gLiTcH-ISO-Creator/raw/refs/heads/main/HYBRID-BASE-grub2-tux-splash.tar.lzma" \
         -O "$temp_dir/bootfiles.tar.lzma"; then
         echo -e "${RED}Error: Failed to download bootfiles${NC}"
         rm -rf "$temp_dir"
@@ -161,10 +161,18 @@ menuentry "$name - Boot to RAM" {
     initrd /casper/$initrd
 }
 
-menuentry "$name - Safe Graphics" {
-    linux /casper/$vmlinuz boot=casper quiet splash nomodeset
-    initrd /casper/$initrd
+menuentry "$name - Encrypted Persistence" {
+    linux /live/$vmlinuz boot=live components quiet splash persistent=cryptsetup persistence-encryption=luks persistence
+    initrd /live/$initrd
+
 }
+
+if [ -f /boot/grub/custom.cfg ]; then
+    menuentry "Custom Options" {
+        configfile /boot/grub/custom.cfg
+    }
+fi
+
 EOF
     else
         # Debian Live configuration
@@ -183,18 +191,18 @@ menuentry "$name - Encrypted Persistence" {
     linux /live/$vmlinuz boot=live components quiet splash persistent=cryptsetup persistence-encryption=luks persistence
     initrd /live/$initrd
 }
+
+if [ -f /boot/grub/custom.cfg ]; then
+    menuentry "Custom Options" {
+        configfile /boot/grub/custom.cfg
+    }
+fi
+
 EOF
     fi
 
     cat >> "$iso_dir/boot/grub/grub.cfg" <<'EOF'
 
-menuentry "Reboot" {
-    reboot
-}
-
-menuentry "Power Off" {
-    halt
-}
 EOF
 
     echo -e "${GREEN}Created GRUB configuration with proven theme approach${NC}"
