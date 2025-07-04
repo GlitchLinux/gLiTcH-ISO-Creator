@@ -189,13 +189,14 @@ EOF
 
     cat >> "$iso_dir/boot/grub/grub.cfg" <<'EOF'
 
+menuentry "Power Off" {
+    halt
+}
+
 menuentry "Reboot" {
     reboot
 }
 
-menuentry "Power Off" {
-    halt
-}
 EOF
 
     echo -e "${GREEN}Created GRUB configuration with proven theme approach${NC}"
